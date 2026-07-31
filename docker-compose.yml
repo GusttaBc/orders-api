@@ -1,0 +1,22 @@
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: orders_db_container
+    environment:
+      POSTGRES_USER: gustavo_developer
+      POSTGRES_PASSWORD: minha_senha_secreta_123
+      POSTGRES_DB: orders_management_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - orders_network
+
+volumes:
+  postgres_data:
+
+networks:
+  orders_network:
+    driver: bridge
