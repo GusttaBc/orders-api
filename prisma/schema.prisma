@@ -15,6 +15,7 @@ model Customer {
   name      String 
   email     String   @unique 
   createdAt DateTime @default(now()) 
+  avatarUrl String? // Foto cadastrada de  referencia para a Facial 
 
   orders    Order[] 
 } 
@@ -36,8 +37,12 @@ model Order {
   customerId String
   productId  String
   quantity   Int
-  status     String @default("COMPLETED")
+  status     String @default("PENDING")
   createdAt  DateTime @default(now())
+
+// Campo para Token de Validaçao 
+  confirmationToken    String?    @unique
+  tokenExpiresAt       DateTime?
 
   
 

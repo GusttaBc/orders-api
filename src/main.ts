@@ -13,6 +13,8 @@ app.useGlobalPipes(
     transform:true // CONVERTE TIPOS AUTOMATICAMENTE ( STRINGS, "5" VIRA NUMBER )
   }),
 );
+// Habilita o CORS para permitir chamadas HTML/Navegador
+app.enableCors();
 
 await app.listen(3000);
 

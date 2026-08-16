@@ -1,104 +1,235 @@
-//REGRA DE NEGOCIO COMEÇA AKI !!
+// REGRA DE NEGOCIO COMEÇA AKI !!
 
 import { Injectable, NotFoundException, BadRequestException } from "@nestjs/common";
 import { PrismaService } from "./prisma.service"; 
+import { MailService } from "./mail.service"; 
 import { CreateOrderDto } from "./create-order.dto";
-
+import { randomBytes } from "crypto"; 
+import { RekognitionClient, CompareFacesCommand } from "@aws-sdk/client-rekognition";
 
 @Injectable()
-export class AppService { 
-  constructor(private readonly prisma: PrismaService) {}
+export class AppService {
+  // Instância do Rekognition
+  private rekognition = new RekognitionClient({
+    region: process.env.AWS_REGION || 'us-east-1',
+  });
 
-    async updateOrderStatus (id: string, status:string){ 
-    const order = await this.prisma.order.findUnique({ // verificaçao sem o pedido e existente 
-      where:{id}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly mailService: MailService, 
+  ) {}
+
+  async confimOrderWithFacial(token: string, imageBase64: string) {
+    // 1. Busca o Pedido Pelo Token
+    const order = await this.prisma.order.findFirst({
+      where: { confirmationToken: token },
+      include: { customer: true },
     });
 
-    if (!order){ 
+    if (!order) {
+      throw new NotFoundException('Token de confirmação inválido ou expirado.');
+    }
+
+    if (order.tokenExpiresAt && order.tokenExpiresAt < new Date()) {
+      throw new BadRequestException('Token Expirado.');
+    }
+
+    if (!order.customer.avatarUrl) {
+      throw new BadRequestException('Cliente não possui foto cadastrada para reconhecimento facial.');
+    }
+
+    // 2. Converte a foto tirada na hora para Buffer
+    const capturedImageBuffer = Buffer.from(
+      imageBase64.replace(/^data:image\/\w+;base64,/, ''),
+      'base64',
+    );
+
+    // 3. Converte a foto do cadastro do cliente para Buffer
+    const registeredImageBuffer = Buffer.from(
+      order.customer.avatarUrl.replace(/^data:image\/\w+;base64,/, ''),
+      'base64',
+    );
+
+    // 4. Compara as Faces na AWS Rekognition
+    const command = new CompareFacesCommand({
+      SourceImage: { Bytes: registeredImageBuffer }, // Foto de Cadastro 
+      TargetImage: { Bytes: capturedImageBuffer },   // Foto Capturada na Hora
+      SimilarityThreshold: 80,                       // Exige 80%+ de similaridade
+    });
+
+    const response = await this.rekognition.send(command);
+
+    // 5. Valida se encontrou combinação
+    const faceMatches = response.FaceMatches || [];
+    if (faceMatches.length === 0) {
+      throw new BadRequestException('Reconhecimento Facial Falhou: Rosto não reconhecido!');
+    }
+
+    const similarity = faceMatches[0].Similarity;
+
+    // 6. Atualiza o status do Pedido para CONFIRMED
+    const updatedOrder = await this.prisma.order.update({
+      where: { id: order.id },
+      data: {
+        status: 'CONFIRMED',
+        confirmationToken: null,
+        tokenExpiresAt: null,
+      },
+    });
+
+    return {
+      message: 'Pedido confirmado com sucesso via Biometria Facial!',
+      similarityScore: `${similarity?.toFixed(2)}%`,
+      orderId: updatedOrder.id,
+      status: updatedOrder.status,
+    };
+  }
+
+  async updateOrderStatus(id: string, status: string) { 
+    const order = await this.prisma.order.findUnique({ // verificação se o pedido é existente 
+      where: { id }
+    });
+
+    if (!order) { 
       throw new NotFoundException('Pedido Não Encontrado !!');
     }
 
-    if (order.status === 'CANCELED'){
-      throw new BadRequestException ('Não e possivel alterar o status de um pedido cancelado');
+    if (order.status === 'CANCELED' || order.status === 'CANCELLED') { // Se o status for Cancelado dispara o erro
+      throw new BadRequestException('Não é possível alterar o status de um pedido cancelado');
     }
 
-    return await this.prisma.order.update({ 
-      where:{id},
-      data:{status},
-      });
+    return await this.prisma.order.update({ // Retorna os Dados do Banco 
+      where: { id }, // Qual coluna Procurar 
+      data: { status }, // Quais Dados Carregar 
+    });
   }
 
-
-  async findOrderById (id: string){ // PROCURAR O USUARIO PELO "ID"
+  async findOrderById(id: string) { // PROCURAR O PEDIDO PELO "ID"
     const order = await this.prisma.order.findUnique({
-      where:{id},
-      include:{
-       customer:true,
-       product:true, 
+      where: { id },
+      include: {
+        customer: true,
+        product: true, 
       }
-      });
-
-      if(!order){
-        throw new NotFoundException('Pedido não encontrado')
-      }
-      return order;
-      }
-
-  //OBTER METRICAS DO SISTEMA 
- async getMetrics (){
-// 1. CONTA QUANTOS CLIENTES EXITE NA TABELA CUSTOMER
-  const totalCustomers = await this.prisma.customer.count();
-// 2. CONTA QUANTOS PRODUTOS EXISTE NA TABELA 
-  const totalProducts = await this.prisma.product.count();
-// 3.CONTA APENAS OS PEDIDOS COM STATUS DE COMPLETO
-  const totalCompletedOrders = await this.prisma.order.count({
-
-  where:{ status:'COMPLETED'},
- });
- // QUANTIDADE DE CANCELAMENTO 
- const totalCancelledOrders = await this.prisma.order.count({
-  where:{status:'CANCELLED'},
- });
- 
- return{ // RETORNA UM OBJETO LIMPO COM TODAS AS METRICAS 
-  totalCustomers,
-  totalProducts,
-  totalCompletedOrders,
-  totalCancelledOrders,
- };
- }
- 
- 
-  async cancelOrder (id:string){ // CANCELAMENTO DO PRODUTO PELO ID
-    const order = await this.prisma.order.findUnique({
-      where: {id},
     });
 
-    if(!order) { // SE O PEDIDO NAO FOR ENCONTRADO ERRO 
-      throw new NotFoundException('Pedido nao Encontrado');
+    if (!order) {
+      throw new NotFoundException('Pedido não encontrado');
     }
-    if (order.status === 'CANCELLED'){ // SE O STATUS FOR IGUAL CANCELADO 
-      throw new BadRequestException ('Este Pedido Esta Cancelado');
+    return order;
+  }
+
+  async confirmOrder(token: string) {
+    // Busca o pedido pelo Token enviado pelo Cliente
+    const order = await this.prisma.order.findFirst({
+      where: { confirmationToken: token },
+    });
+
+    if (!order) {
+      throw new NotFoundException('Token de confirmação inválido ou não encontrado.');
     }
 
-    return await this.prisma.$transaction([ // $transaction EXECULTA MULTIPLOS COMANDO DE FORMA ALTOMATICA ("SE UM FALHAR TODOS SOFRE ROLLBACK")
-      this.prisma.order.update({
-        where: {id },
-        data: { status:'CANCELLED'},
+    // Verifica se o Token já expirou (15 minutos)
+    if (order.tokenExpiresAt && order.tokenExpiresAt < new Date()) {
+      throw new BadRequestException('Token expirado. Por favor, solicite um novo código.');
+    }
+
+    // Atualiza o Status do Pedido para CONFIRMED e limpa o Token
+    const updatedOrder = await this.prisma.order.update({
+      where: { id: order.id },
+      data: {
+        status: 'CONFIRMED',
+        confirmationToken: null, 
+        tokenExpiresAt: null,
+      },
+    });
+
+    return {
+      message: 'Pedido Confirmado',
+      orderId: updatedOrder.id,   
+      status: updatedOrder.status, 
+    };
+  }
+
+  async deleteOrder(id: string) { // Busca o pedido para saber qual quantidade devolver
+    const order = await this.prisma.order.findUnique({
+      where: { id },
+    });
+
+    if (!order) {
+      throw new NotFoundException('Pedido Nao encontrado');
+    } 
+
+    await this.prisma.$transaction([ // Deleta o pedido e Devolve o produto ao estoque
+      this.prisma.order.delete({
+        where: { id },
       }),
-      this.prisma.product.update({ // LOGICA PARA O PEDIDO VOLTAR AO ESTOQUE 
-        where:{id: order.productId}, 
+
+      this.prisma.product.update({
+        where: { id: order.productId },
         data: {
-          stockQuantity:{
-            increment: order.quantity, // ALMENTA A QUANTIDADE NO BANCO
+          stockQuantity: {
+            increment: order.quantity, // Incrementa a quantidade no estoque
           },
         },
       }),
-
     ]);
 
+    return { message: 'Pedido Cancelado e Produto Devolvido ao Estoque com Sucesso' };
   }
-  // Todo o nosso código e validações ficam protegidos dentro deste método:
+
+  // OBTER METRICAS DO SISTEMA 
+  async getMetrics() {
+    // 1. CONTA QUANTOS CLIENTES EXISTEM NA TABELA CUSTOMER
+    const totalCustomers = await this.prisma.customer.count();
+    // 2. CONTA QUANTOS PRODUTOS EXISTEM NA TABELA 
+    const totalProducts = await this.prisma.product.count();
+    // 3. CONTA APENAS OS PEDIDOS COM STATUS DE COMPLETO
+    const totalCompletedOrders = await this.prisma.order.count({
+      where: { status: 'COMPLETED' },
+    });
+    // QUANTIDADE DE CANCELAMENTOS 
+    const totalCancelledOrders = await this.prisma.order.count({
+      where: { status: 'CANCELLED' },
+    });
+    
+    return { // RETORNA UM OBJETO LIMPO COM TODAS AS METRICAS 
+      totalCustomers,
+      totalProducts,
+      totalCompletedOrders,
+      totalCancelledOrders,
+    };
+  }
+
+  async cancelOrder(id: string) { // CANCELAMENTO DO PRODUTO PELO ID
+    const order = await this.prisma.order.findUnique({
+      where: { id },
+    });
+
+    if (!order) { // SE O PEDIDO NAO FOR ENCONTRADO ERRO 
+      throw new NotFoundException('Pedido nao Encontrado');
+    }
+    if (order.status === 'CANCELLED') { // SE O STATUS FOR IGUAL CANCELADO 
+      throw new BadRequestException('Este Pedido Esta Cancelado');
+    }
+
+    return await this.prisma.$transaction([ // $transaction EXECUTA MULTIPLOS COMANDOS DE FORMA AUTOMATICA
+      this.prisma.order.update({
+        where: { id },
+        data: { status: 'CANCELLED' },
+      }),
+      this.prisma.product.update({ // LOGICA PARA O PEDIDO VOLTAR AO ESTOQUE 
+        where: { id: order.productId }, 
+        data: {
+          stockQuantity: {
+            increment: order.quantity, // AUMENTA A QUANTIDADE NO BANCO
+          },
+        },
+      }),
+    ]);
+  }
+
+  // Método de criação de pedido completo e validado
   async createOrder(data: CreateOrderDto) {  
     const { customerId, productId, quantity } = data; // data = requisiçoes do body 
 
@@ -130,11 +261,14 @@ export class AppService {
       throw new BadRequestException(
         `Estoque insuficiente. Quantidade disponível: ${product.stockQuantity}`
       );
-    
     }
 
-    // 5. Transação no Banco de Dados (Tudo ou nada!)
-    return this.prisma.$transaction(async (tx) => {  // evita erro e retorna o banco ao estado original outudo roda com sucesso ou nada acontece 
+    // 5. Gera Token e Data de Expiração (15 Minutos) 👈 FORA DO IF DO ESTOQUE
+    const confirmationToken = randomBytes(3).toString('hex').toUpperCase(); // Exemplo: 'B4F9A1'
+    const tokenExpiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutos em ms
+
+    // 6. Transação no Banco de Dados (RollBack / Tudo ou Nada)
+    const result = await this.prisma.$transaction(async (tx) => {
       await tx.product.update({
         where: { id: productId },
         data: {
@@ -142,38 +276,51 @@ export class AppService {
         },
       });
 
-      // C) Cadastrar o pedido
+      // Cadastra o Pedido Pendente Com Token 
       const order = await tx.order.create({
         data: {
           customerId,
-          productId, 
+          productId,
           quantity,
-        },
-
+          status: 'PENDING',
+          confirmationToken,
+          tokenExpiresAt,
+        }, 
         include: {
           customer: true,
           product: true,
         },
       });
-
-      return {
-        message: 'Pedido realizado com sucesso!',
-        order,
-      };
+      
+      return order; 
     });
+    
+    // 7. Envia e-mail com o Token de Confirmação para o cliente 
+    if (customer.email) {
+      await this.mailService.sendOrderConfirmationEmail(
+        customer.email,
+        result.id,
+        confirmationToken,
+      );
+    }
+
+    return {
+      message: 'Pedido realizado com sucesso! Verifique seu e-mail para confirmar.',
+      order: result,
+      confirmationToken, // Retornando aqui para facilitar nos testes do Http Client
+    };
   } 
 
-// BUSCAR TODOS OS PEDIDOS
- async findAllOrders (){
-  return this.prisma.order.findMany({
-    include:{
-      customer:true,
-      product:true,
-    },
-    orderBy:{
-      createdAt:'desc',
-    },
-  });
- }
+  // BUSCAR TODOS OS PEDIDOS
+  async findAllOrders() {
+    return this.prisma.order.findMany({
+      include: {
+        customer: true,
+        product: true,
+      },
+      orderBy: {
+        createdAt: 'desc', // Devolve a Data e a Hora exata que foi feita a consulta 
+      },
+    });
+  }
 }
-  

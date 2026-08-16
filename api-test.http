@@ -1,6 +1,7 @@
-PATCH http://127.0.0.1:3000/orders/39d9a29a-9f25-48fb-9c1d-04206969661e/status
+PATCH http://localhost:3000/orders/confirm-facial
 Content-Type: application/json
 
 {
-  "status": "COMPLETED"
+  "token": "SEU_TOKEN_AQUI",
+  "imageBase64": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ..."
 }

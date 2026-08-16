@@ -1,0 +1,86 @@
+// test HTML 
+
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Confirmação por Biometria Facial</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 600px; margin: 40px auto; text-align: center; }
+    video, canvas { width: 100%; max-width: 400px; border-radius: 8px; border: 2px solid #ccc; }
+    input, button { padding: 12px; margin: 10px 0; width: 100%; box-sizing: border-box; font-size: 16px; }
+    button { background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+    button:hover { background-color: #0056b3; }
+    #status { margin-top: 15px; font-weight: bold; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+
+  <h2>Confirmação de Pedido - Reconhecimento Facial</h2>
+
+  <label for="token">Token de Confirmação:</label>
+  <input type="text" id="token" placeholder="Cole aqui o token do e-mail/API">
+
+  <div>
+    <video id="webcam" autoplay playsinline></video>
+    <canvas id="canvas" style="display:none;"></canvas>
+  </div>
+
+  <button id="btnCapturar">Tirar Foto e Confirmar Pedido</button>
+
+  <div id="status"></div>
+
+  <script>
+    const video = document.getElementById('webcam');
+    const canvas = document.getElementById('canvas');
+    const statusDiv = document.getElementById('status');
+
+    // Liga a Webcam
+    navigator.mediaDevices.getUserMedia({ video: true })
+      .then(stream => { video.srcObject = stream; })
+      .catch(err => { statusDiv.innerText = 'Erro ao acessar a webcam: ' + err; });
+
+    document.getElementById('btnCapturar').addEventListener('click', async () => {
+      const token = document.getElementById('token').value.trim();
+      if (!token) {
+        alert('Por favor, informe o token de confirmação.');
+        return;
+      }
+
+      statusDiv.style.color = 'black';
+      statusDiv.innerText = 'Processando reconhecimento facial...';
+
+      // Captura a foto da webcam no Canvas
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const context = canvas.getContext('2d');
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      // Converte a foto para Base64
+      const imageBase64 = canvas.toDataURL('image/jpeg');
+
+      try {
+        // Envia para o NestJS
+        const response = await fetch('http://localhost:3000/orders/confirm-facial', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token, imageBase64 })
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+          statusDiv.style.color = 'green';
+          statusDiv.innerText = `✅ Sucesso!\n${data.message}\nSimilaridade: ${data.similarityScore}`;
+        } else {
+          statusDiv.style.color = 'red';
+          statusDiv.innerText = `❌ Erro (${data.statusCode}): ${data.message}`;
+        }
+      } catch (err) {
+        statusDiv.style.color = 'red';
+        statusDiv.innerText = 'Erro de conexão com o servidor NestJS.';
+      }
+    });
+  </script>
+</body>
+</html>
