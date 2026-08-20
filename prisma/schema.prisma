@@ -11,11 +11,11 @@ generator client {
 
 // 1. TABELA DE CLIENTES  
 model Customer { 
-  id        String   @id @default(uuid()) 
-  name      String 
-  email     String   @unique 
-  createdAt DateTime @default(now()) 
-  avatarUrl String? // Foto cadastrada de  referencia para a Facial 
+  id           String   @id @default(uuid()) 
+  name         String 
+  email        String   @unique 
+  createdAt    DateTime @default(now()) 
+  avatarUrl    String? // Foto cadastrada de  referencia para a Facial 
 
   orders    Order[] 
 } 

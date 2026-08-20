@@ -25,6 +25,11 @@ export class AppController {
     return this.appService.findAllOrders();
   }
 
+  @Get('confirm-facial/qrcode/:token')
+  async getFacialQrCode(@Param('token') token:string){
+    return this.appService.generatrFacialQrCode(token);
+  }
+
   // 4. OBTER MÉTRICAS (GET /orders/metrics)
   @Get('metrics')
   getMetrics() {

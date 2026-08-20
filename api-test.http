@@ -1,7 +1,8 @@
-PATCH http://localhost:3000/orders/confirm-facial
+POST http://localhost:3000/orders
 Content-Type: application/json
 
 {
-  "token": "SEU_TOKEN_AQUI",
-  "imageBase64": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ..."
+  "customerId": "cliente-1",
+  "productId": "produto-1",
+  "quantity": 1
 }

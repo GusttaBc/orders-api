@@ -4,14 +4,16 @@ import { Injectable, NotFoundException, BadRequestException } from "@nestjs/comm
 import { PrismaService } from "./prisma.service"; 
 import { MailService } from "./mail.service"; 
 import { CreateOrderDto } from "./create-order.dto";
-import { randomBytes } from "crypto"; 
-import { RekognitionClient, CompareFacesCommand } from "@aws-sdk/client-rekognition";
+import { randomBytes } from "crypto";
+import { RekognitionClient, CompareFacesCommand } from "@aws-sdk/client-rekognition"; // Biblioteca Responsavel pela Facial (AWS)
+import * as QRCode from 'qrcode'; // responsavel por gerar um qr code
 
 @Injectable()
 export class AppService {
-  // Instância do Rekognition
+  
+  // Instância do Rekognition 
   private rekognition = new RekognitionClient({
-    region: process.env.AWS_REGION || 'us-east-1',
+    region: process.env.AWS_REGION || 'us-east-1', // Qual data center responssavel da AWS serao Processadas ( Respossavel por fazer a Comparaçao Facial)
   });
 
   constructor(
@@ -22,25 +24,25 @@ export class AppService {
   async confimOrderWithFacial(token: string, imageBase64: string) {
     // 1. Busca o Pedido Pelo Token
     const order = await this.prisma.order.findFirst({
-      where: { confirmationToken: token },
-      include: { customer: true },
+      where: { confirmationToken: token }, // Onde ele vai Procurar  e Espera que Retorne Um Token 
+      include: { customer: true }, // Verifica se O pedido e Vedadeiro 
     });
 
     if (!order) {
-      throw new NotFoundException('Token de confirmação inválido ou expirado.');
+      throw new NotFoundException('Token de confirmação inválido ou expirado.'); // Se o pedido Nao For encontrado 
     }
 
-    if (order.tokenExpiresAt && order.tokenExpiresAt < new Date()) {
+    if (order.tokenExpiresAt && order.tokenExpiresAt < new Date()) { // Se o Token Tiver Passado Dos 15 Minutos 
       throw new BadRequestException('Token Expirado.');
     }
 
-    if (!order.customer.avatarUrl) {
+    if (!order.customer.avatarUrl) { // Verifica se Ocliente Tem Uma Foto no Cadastro 
       throw new BadRequestException('Cliente não possui foto cadastrada para reconhecimento facial.');
     }
 
     // 2. Converte a foto tirada na hora para Buffer
     const capturedImageBuffer = Buffer.from(
-      imageBase64.replace(/^data:image\/\w+;base64,/, ''),
+      imageBase64.replace(/^data:image\/\w+;base64,/, ''),// Converte a Imagen enviada no Formato DATA URL para BUFFER ou (Binario)
       'base64',
     );
 
@@ -85,6 +87,31 @@ export class AppService {
     };
   }
 
+   async generatrFacialQrCode(token:string){
+    // Busca o Pedido pelo Token 
+    const order = await this.prisma.order.findFirst({
+      where:{ confirmationToken: token}
+    });
+
+    if (!order){
+      throw new NotFoundException('Token inválido ou pedido não encontrado.');
+    }
+    // URL Que o celular Vai abrir ao Ler o QR code
+    // Subistitua pelo Ip Local 
+    const mobileUrl = `http://192.168.1.5/facial-mobile.html?token=${token}`;
+   
+  
+    // Gera a Imagem Em Formato Data URL (Base64)
+    const qrCodeDataUrl =  await QRCode.toDataURL(mobileUrl);
+
+    return{
+      messege: 'QR code Gerado Com Sucesso',
+      token,
+      qrCodeUrl:qrCodeDataUrl,
+      mobileUrl,
+    };
+  }
+
   async updateOrderStatus(id: string, status: string) { 
     const order = await this.prisma.order.findUnique({ // verificação se o pedido é existente 
       where: { id }
@@ -104,6 +131,7 @@ export class AppService {
     });
   }
 
+
   async findOrderById(id: string) { // PROCURAR O PEDIDO PELO "ID"
     const order = await this.prisma.order.findUnique({
       where: { id },
@@ -118,6 +146,7 @@ export class AppService {
     }
     return order;
   }
+
 
   async confirmOrder(token: string) {
     // Busca o pedido pelo Token enviado pelo Cliente
@@ -151,6 +180,7 @@ export class AppService {
     };
   }
 
+
   async deleteOrder(id: string) { // Busca o pedido para saber qual quantidade devolver
     const order = await this.prisma.order.findUnique({
       where: { id },
@@ -178,6 +208,7 @@ export class AppService {
     return { message: 'Pedido Cancelado e Produto Devolvido ao Estoque com Sucesso' };
   }
 
+
   // OBTER METRICAS DO SISTEMA 
   async getMetrics() {
     // 1. CONTA QUANTOS CLIENTES EXISTEM NA TABELA CUSTOMER
@@ -200,6 +231,7 @@ export class AppService {
       totalCancelledOrders,
     };
   }
+
 
   async cancelOrder(id: string) { // CANCELAMENTO DO PRODUTO PELO ID
     const order = await this.prisma.order.findUnique({
@@ -228,6 +260,7 @@ export class AppService {
       }),
     ]);
   }
+
 
   // Método de criação de pedido completo e validado
   async createOrder(data: CreateOrderDto) {  
@@ -310,6 +343,7 @@ export class AppService {
       confirmationToken, // Retornando aqui para facilitar nos testes do Http Client
     };
   } 
+  
 
   // BUSCAR TODOS OS PEDIDOS
   async findAllOrders() {
